@@ -4,16 +4,6 @@ if exists("g:LatexBox_no_mappings")
 	finish
 endif
 
-" latexmk {{{
-map <buffer> <LocalLeader>ll :Latexmk<CR>
-map <buffer> <LocalLeader>lL :Latexmk!<CR>
-map <buffer> <LocalLeader>lc :LatexmkClean<CR>
-map <buffer> <LocalLeader>lC :LatexmkClean!<CR>
-map <buffer> <LocalLeader>lg :LatexmkStatus<CR>
-map <buffer> <LocalLeader>lG :LatexmkStatus!<CR>
-map <buffer> <LocalLeader>lk :LatexmkStop<CR>
-map <buffer> <LocalLeader>le :LatexErrors<CR>
-" }}}
 
 " View {{{
 map <buffer> <LocalLeader>lv :LatexView<CR>
@@ -41,6 +31,12 @@ vmap <buffer> a$ <Plug>LatexBox_SelectInlineMathOuter
 omap <buffer> i$ :normal vi$<CR>
 omap <buffer> a$ :normal va$<CR>
 " }}}
+
+
+map <C-I> <Esc>:!pdflatex.sh +3 +b +o "%:p"<CR>
+map <C-B> <Esc>:!pdflatex.sh +3 +o "%:p"<CR>
+map <C-K> <Esc>:!pdflatex.sh -kk "%:p"<CR>
+
 
 setlocal omnifunc=LatexBox_Complete
 
