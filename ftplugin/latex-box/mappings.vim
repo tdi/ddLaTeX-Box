@@ -32,10 +32,13 @@ omap <buffer> i$ :normal vi$<CR>
 omap <buffer> a$ :normal va$<CR>
 " }}}
 
+map <leader>lb  <Esc>:!pdflatex.sh +3 +b +o "%:p"<CR>
+map <leader>ll  <Esc>:!pdflatex.sh +3 +o "%:p"<CR>
+map <leader>lck <Esc>:!pdflatex.sh -kk "%:p"<CR>
 
-map <C-I> <Esc>:!pdflatex.sh +3 +b +o "%:p"<CR>
-map <C-B> <Esc>:!pdflatex.sh +3 +o "%:p"<CR>
-map <C-K> <Esc>:!pdflatex.sh -kk "%:p"<CR>
+"map <C-I> <Esc>:!pdflatex.sh +3 +b +o "%:p"<CR>
+"map <C-B> <Esc>:!pdflatex.sh +3 +o "%:p"<CR>
+"map <C-K> <Esc>:!pdflatex.sh -kk "%:p"<CR>
 
 
 setlocal omnifunc=LatexBox_Complete
