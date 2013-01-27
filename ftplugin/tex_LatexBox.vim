@@ -13,7 +13,8 @@ else
 	endfunction
 endif
 
-if !exists('s:loaded')
+setlocal nopaste
+if !exists('s:LatexBox_loaded')
 
 	let prefix = expand('<sfile>:p:h') . '/latex-box/'
 
@@ -22,11 +23,15 @@ if !exists('s:loaded')
 	execute 'source ' . s:FNameEscape(prefix . 'motion.vim')
 	execute 'source ' . s:FNameEscape(prefix . 'teximaps.vim')
 
-	let s:loaded = 1
+	execute 'source ' . s:FNameEscape(prefix . 'mappings.vim')
+	" execute 'source ' . s:FNameEscape(prefix . 'indent.vim')
+	execute 'source ' . s:FNameEscape(prefix . 'findmain.vim')
+	execute 'source ' . s:FNameEscape(prefix . 'folding.vim')
+
+
+	let s:LatexBox_loaded = 1
 
 endif
 
-execute 'source ' . s:FNameEscape(prefix . 'mappings.vim')
-execute 'source ' . s:FNameEscape(prefix . 'indent.vim')
 
 " vim:fdm=marker:ff=unix:noet:ts=4:sw=4
