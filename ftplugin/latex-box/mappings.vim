@@ -35,11 +35,7 @@ omap <buffer> a$ :normal va$<CR>
 map <leader>lb  <Esc>:!pdflatex.sh +3 +b +o "%:p"<CR>
 map <leader>ll  <Esc>:!pdflatex.sh +3 +o "%:p"<CR>
 map <leader>lck <Esc>:!pdflatex.sh -kk "%:p"<CR>
-
-"map <C-I> <Esc>:!pdflatex.sh +3 +b +o "%:p"<CR>
-"map <C-B> <Esc>:!pdflatex.sh +3 +o "%:p"<CR>
-"map <C-K> <Esc>:!pdflatex.sh -kk "%:p"<CR>
-
+map <leader>lm <Esc>:!pdflatex.sh -kk "main.tex"<CR>
 
 setlocal omnifunc=LatexBox_Complete
 
@@ -53,5 +49,6 @@ map <silent> <buffer> § :call LatexBox_JumpToNextBraces(1)<CR>
 imap <silent> <buffer> ¶ <C-R>=LatexBox_JumpToNextBraces(0)<CR>
 imap <silent> <buffer> § <C-R>=LatexBox_JumpToNextBraces(1)<CR>
 " }}}
+
 
 " vim:fdm=marker:ff=unix:noet:ts=4:sw=4
