@@ -35,7 +35,7 @@ omap <buffer> a$ :normal va$<CR>
 map <leader>lb  <Esc>:!pdflatex.sh +3 +b +o "%:p"<CR>
 map <leader>ll  <Esc>:!pdflatex.sh +3 +o "%:p"<CR>
 map <leader>lck <Esc>:!pdflatex.sh -kk "%:p"<CR>
-map <leader>lm <Esc>:!pdflatex.sh -kk "main.tex"<CR>
+map <leader>lm <Esc>:!pdflatex.sh +3 +b +o "main.tex"<CR>
 
 setlocal omnifunc=LatexBox_Complete
 
