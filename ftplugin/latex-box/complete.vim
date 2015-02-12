@@ -24,7 +24,7 @@ if !exists('g:LatexBox_cite_pattern')
 	let g:LatexBox_cite_pattern = '\C\\\a*cite\a*\*\?\(\[[^\]]*\]\)*\_\s*{'
 endif
 if !exists('g:LatexBox_ref_pattern')
-	let g:LatexBox_ref_pattern = '\C\\v\?\(eq\|page\|[cC]\)\?ref\*\?\_\s*{'
+	let g:LatexBox_ref_pattern = '\C\\v\?\(eq\|page\|[cC]\|labelc\)\?ref\*\?\_\s*{'
 endif
 
 if !exists('g:LatexBox_completion_environments')
@@ -77,13 +77,14 @@ endif
 function! LatexBox_kpsewhich(file)
 	let old_dir = getcwd()
 	execute 'lcd ' . fnameescape(LatexBox_GetTexRoot())
-	redir => out
-	silent execute '!kpsewhich ' . a:file
-	redir END
+	let out = system('kpsewhich "' . a:file . '"')
 
-	let out = split(out, "\<NL>")[-1]
-	let out = substitute(out, '\r', '', 'g')
-	let out = glob(fnamemodify(out, ':p'), 1)
+	" If kpsewhich has found something, it returns a non-empty string with a
+	" newline at the end; otherwise the string is empty
+	if len(out)
+		" Remove the trailing newline
+		let out = fnamemodify(out[:-2], ':p')
+	endif
 
 	execute 'lcd ' . fnameescape(old_dir)
 
@@ -105,13 +106,13 @@ function! LatexBox_Complete(findstart, base)
 		endwhile
 
 		let line_start = line[:pos-1]
-		if line_start =~ '\C\\begin\_\s*{$'
+		if line_start =~ '\m\C\\begin\_\s*{$'
 			let s:completion_type = 'begin'
-		elseif line_start =~ '\C\\end\_\s*{$'
+		elseif line_start =~ '\m\C\\end\_\s*{$'
 			let s:completion_type = 'end'
-		elseif line_start =~ g:LatexBox_ref_pattern . '$'
+		elseif line_start =~ '\m' . g:LatexBox_ref_pattern . '$'
 			let s:completion_type = 'ref'
-		elseif line_start =~ g:LatexBox_cite_pattern . '$'
+		elseif line_start =~ '\m' . g:LatexBox_cite_pattern . '$'
 			let s:completion_type = 'bib'
 			" check for multiple citations
 			let pos = col('.') - 1
@@ -188,7 +189,6 @@ endfunction
 " the optional argument is the file name to be searched
 
 function! s:FindBibData(...)
-
 	if a:0 == 0
 		let file = LatexBox_GetMainTexFile()
 	else
@@ -196,78 +196,121 @@ function! s:FindBibData(...)
 	endif
 
 	if !filereadable(file)
-		return ''
+		return []
 	endif
-
-	let bibliography_cmds = [ '\\bibliography', '\\addbibresource', '\\addglobalbib', '\\addsectionbib' ]
-
 	let lines = readfile(file)
-
 	let bibdata_list = []
 
+	"
+	" Search for added bibliographies
+	"
+	let bibliography_cmds = [
+				\ '\\bibliography',
+				\ '\\addbibresource',
+				\ '\\addglobalbib',
+				\ '\\addsectionbib',
+				\ ]
 	for cmd in bibliography_cmds
-		let bibdata_list +=
-				\ map(filter(copy(lines), 'v:val =~ ''\C' . cmd . '\s*{[^}]\+}'''),
-				\ 'matchstr(v:val, ''\C' . cmd . '\s*{\zs[^}]\+\ze}'')')
+		let filtered = filter(copy(lines),
+					\ 'v:val =~ ''\C' . cmd . '\s*{[^}]\+}''')
+		let files = map(filtered,
+					\ 'matchstr(v:val, ''\C' . cmd . '\s*{\zs[^}]\+\ze}'')')
+		for file in files
+			let bibdata_list += map(split(file, ','),
+						\ 'fnamemodify(v:val, '':r'')')
+		endfor
 	endfor
 
-	let bibdata_list +=
-				\ map(filter(copy(lines), 'v:val =~ ''\C\\\%(input\|include\)\s*{[^}]\+}'''),
-				\ 's:FindBibData(LatexBox_kpsewhich(matchstr(v:val, ''\C\\\%(input\|include\)\s*{\zs[^}]\+\ze}'')))')
+	"
+	" Also search included files
+	"
+	for input in filter(lines,
+				\ 'v:val =~ ''\C\\\%(input\|include\)\s*{[^}]\+}''')
+		let bibdata_list += s:FindBibData(LatexBox_kpsewhich(
+					\ matchstr(input,
+						\ '\C\\\%(input\|include\)\s*{\zs[^}]\+\ze}')))
+	endfor
 
-	let bibdata_list +=
-				\ map(filter(copy(lines), 'v:val =~ ''\C\\\%(input\|include\)\s\+\S\+'''),
-				\ 's:FindBibData(LatexBox_kpsewhich(matchstr(v:val, ''\C\\\%(input\|include\)\s\+\zs\S\+\ze'')))')
-
-	let bibdata = join(bibdata_list, ',')
-
-	return bibdata
+	return bibdata_list
 endfunction
 
 let s:bstfile = expand('<sfile>:p:h') . '/vimcomplete'
 
 function! LatexBox_BibSearch(regexp)
+	let res = []
 
-	" find bib data
-    let bibdata = s:FindBibData()
-    if bibdata == ''
-        echomsg 'error: no \bibliography{...} command found'
-        return
-    endif
+	" Find data from bib files
+	let bibdata = join(s:FindBibData(), ',')
+	if bibdata != ''
 
-    " write temporary aux file
-	let tmpbase = LatexBox_GetTexRoot() . '/_LatexBox_BibComplete'
-    let auxfile = tmpbase . '.aux'
-    let bblfile = tmpbase . '.bbl'
-    let blgfile = tmpbase . '.blg'
+		" write temporary aux file
+		let tmpbase = LatexBox_GetTexRoot() . '/_LatexBox_BibComplete'
+		let auxfile = tmpbase . '.aux'
+		let bblfile = tmpbase . '.bbl'
+		let blgfile = tmpbase . '.blg'
 
-    call writefile(['\citation{*}', '\bibstyle{' . s:bstfile . '}', '\bibdata{' . bibdata . '}'], auxfile)
+		call writefile(['\citation{*}', '\bibstyle{' . s:bstfile . '}',
+					\ '\bibdata{' . bibdata . '}'], auxfile)
 
-    silent execute '! cd ' shellescape(LatexBox_GetTexRoot()) .
-				\ ' ; bibtex -terse ' . fnamemodify(auxfile, ':t') . ' >/dev/null'
-
-    let res = []
-    let curentry = ''
-
-	let lines = split(substitute(join(readfile(bblfile), "\n"), '\n\n\@!\(\s\=\)\s*\|{\|}', '\1', 'g'), "\n")
-
-    for line in filter(lines, 'v:val =~ a:regexp')
-		let matches = matchlist(line, '^\(.*\)||\(.*\)||\(.*\)||\(.*\)||\(.*\)')
-		if !empty(matches) && !empty(matches[1])
-			call add(res, {'key': matches[1], 'type': matches[2],
-						\ 'author': matches[3], 'year': matches[4], 'title': matches[5]})
+		if has('win32')
+			let l:old_shellslash = &l:shellslash
+			setlocal noshellslash
+			silent execute '! cd ' shellescape(LatexBox_GetTexRoot()) .
+						\ ' & bibtex -terse '
+						\ . fnamemodify(auxfile, ':t') . ' >nul'
+			let &l:shellslash = l:old_shellslash
+		else
+			silent execute '! cd ' shellescape(LatexBox_GetTexRoot()) .
+						\ ' ; bibtex -terse '
+						\ . fnamemodify(auxfile, ':t') . ' >/dev/null'
 		endif
-    endfor
 
-	call delete(auxfile)
-	call delete(bblfile)
-	call delete(blgfile)
+		let lines = split(substitute(join(readfile(bblfile), "\n"),
+					\ '\n\n\@!\(\s\=\)\s*\|{\|}', '\1', 'g'), "\n")
+
+		for line in filter(lines, 'v:val =~ a:regexp')
+			let matches = matchlist(line,
+						\ '^\(.*\)||\(.*\)||\(.*\)||\(.*\)||\(.*\)')
+			if !empty(matches) && !empty(matches[1])
+				let s:type_length = max([s:type_length,
+							\ len(matches[2]) + 3])
+				call add(res, {
+							\ 'key': matches[1],
+							\ 'type': matches[2],
+							\ 'author': matches[3],
+							\ 'year': matches[4],
+							\ 'title': matches[5],
+							\ })
+			endif
+		endfor
+
+		call delete(auxfile)
+		call delete(bblfile)
+		call delete(blgfile)
+	endif
+
+	" Find data from 'thebibliography' environments
+	let lines = readfile(LatexBox_GetMainTexFile())
+	if match(lines, '\C\\begin{thebibliography}') >= 0
+		for line in filter(filter(lines, 'v:val =~ ''\C\\bibitem'''),
+					\ 'v:val =~ a:regexp')
+			let match = matchlist(line, '\\bibitem{\([^}]*\)')[1]
+			call add(res, {
+						\ 'key': match,
+						\ 'type': '',
+						\ 'author': '',
+						\ 'year': '',
+						\ 'title': match,
+						\ })
+		endfor
+	endif
 
 	return res
 endfunction
 " }}}
 
 " BibTeX completion {{{
+let s:type_length=0
 function! LatexBox_BibComplete(regexp)
 
 	" treat spaces as '.*' if needed
@@ -278,21 +321,27 @@ function! LatexBox_BibComplete(regexp)
 		let regexp = a:regexp
 	endif
 
-    let res = []
-    for m in LatexBox_BibSearch(regexp)
-
-        let w = {'word': m['key'],
-					\ 'abbr': '[' . m['type'] . '] ' . m['author'] . ' (' . m['year'] . ')',
-					\ 'menu': m['title']}
+	let res = []
+	let s:type_length = 4
+	for m in LatexBox_BibSearch(regexp)
+		let type = m['type']   == '' ? '[-]' : '[' . m['type']   . '] '
+		let type = printf('%-' . s:type_length . 's', type)
+		let auth = m['author'] == '' ? ''    :       m['author'][:20] . ' '
+		let auth = substitute(auth, '\~', ' ', 'g')
+		let auth = substitute(auth, ',.*\ze', ' et al. ', '')
+		let year = m['year']   == '' ? ''    : '(' . m['year']   . ')'
+		let w = { 'word': m['key'],
+				\ 'abbr': type . auth . year,
+				\ 'menu': m['title'] }
 
 		" close braces if needed
 		if g:LatexBox_completion_close_braces && !s:NextCharsMatch('^\s*[,}]')
 			let w.word = w.word . '}'
 		endif
 
-        call add(res, w)
-    endfor
-    return res
+		call add(res, w)
+	endfor
+	return res
 endfunction
 " }}}
 
@@ -317,11 +366,12 @@ function! s:ExtractLabels()
 		let curname = strpart( getline( lblline ), lblbegin, nameend - lblbegin - 1 )
 
 		" Ignore cref entries (because they are duplicates)
-		if curname =~ "\@cref"
+		if curname =~# "@cref$"
+		    let [lblline, lblbegin] = searchpos( '\\newlabel{', 'ecW' )
 			continue
 		endif
 
-		if 0 == search( '{\w*{', 'ce', lblline )
+		if 0 == search( '\m{\w*{', 'ce', lblline )
 		    let [lblline, lblbegin] = searchpos( '\\newlabel{', 'ecW' )
 		    continue
 		endif
@@ -334,7 +384,7 @@ function! s:ExtractLabels()
 		endif
 		let curnumber = strpart( getline( lblline ), numberbegin, numberend - numberbegin - 1 )
 
-		if 0 == search( '\w*{', 'ce', lblline )
+		if 0 == search( '\m\w*{', 'ce', lblline )
 		    let [lblline, lblbegin] = searchpos( '\\newlabel{', 'ecW' )
 		    continue
 		endif
@@ -378,7 +428,8 @@ function! s:ExtractInputs()
 		let [inline, inbegin] = searchpos( '\\@input{', 'ecW' )
 	endwhile
 
-	return matches
+	" Remove empty strings for nonexistant .aux files
+	return filter(matches, 'v:val != ""')
 endfunction
 "}}}
 
@@ -402,19 +453,26 @@ let s:LabelCache = {}
 " the LabelCache, all current labels are collected and
 " returned.
 function! s:GetLabelCache(file)
-	let fid = fnamemodify(a:file, ':p')
-
-	let labels = []
-	if !has_key(s:LabelCache , fid) || s:LabelCache[fid][0] != getftime(fid)
-		" Open file in temporary split window for label extraction.
-		exe '1sp +let\ labels=<SID>ExtractLabels()|quit! ' . fid
-		exe '1sp +let\ inputs=<SID>ExtractInputs()|quit! ' . fid
-		let s:LabelCache[fid] = [ getftime(fid), labels, inputs ]
-	else
-		let labels = s:LabelCache[fid][1]
+	if !filereadable(a:file)
+		return []
 	endif
 
-	for input in s:LabelCache[fid][2]
+	if !has_key(s:LabelCache , a:file) || s:LabelCache[a:file][0] != getftime(a:file)
+		" Open file in temporary split window for label extraction.
+		let main_tex_file = LatexBox_GetMainTexFile()
+		silent execute '1sp +let\ b:main_tex_file=main_tex_file|let\ labels=s:ExtractLabels()|let\ inputs=s:ExtractInputs()|quit! ' . fnameescape(a:file)
+		let s:LabelCache[a:file] = [ getftime(a:file), labels, inputs ]
+	endif
+
+	" We need to create a copy of s:LabelCache[fid][1], otherwise all inputs'
+	" labels would be added to the current file's label cache upon each
+	" completion call, leading to duplicates/triplicates/etc. and decreased
+	" performance.
+	" Also, because we don't anything with the list besides matching copies,
+	" we can get away with a shallow copy for now.
+	let labels = copy(s:LabelCache[a:file][1])
+
+	for input in s:LabelCache[a:file][2]
 		let labels += s:GetLabelCache(input)
 	endfor
 
@@ -423,20 +481,8 @@ endfunction
 "}}}
 
 " Complete Labels {{{
-" the optional argument is the file name to be searched
-function! s:CompleteLabels(regex, ...)
-
-	if a:0 == 0
-		let file = LatexBox_GetAuxFile()
-	else
-		let file = a:1
-	endif
-
-	if !filereadable(file)
-		return []
-	endif
-
-	let labels = s:GetLabelCache(file)
+function! s:CompleteLabels(regex)
+	let labels = s:GetLabelCache(LatexBox_GetAuxFile())
 
 	let matches = filter( copy(labels), 'match(v:val[0], "' . a:regex . '") != -1' )
 	if empty(matches)
@@ -472,7 +518,7 @@ endfunction
 " Complete Inline Math Or Not {{{
 " Return 1, when cursor is in a math env:
 " 	1, there is a single $ in the current line on the left of cursor
-" 	2, there is an open-eq-env on/above the current line 
+" 	2, there is an open-eq-env on/above the current line
 " 		(open-eq-env : \(, \[, and \begin{eq-env} )
 " Return 0, when cursor is not in a math env
 function! s:LatexBox_complete_inlineMath_or_not()
@@ -516,7 +562,7 @@ function! s:LatexBox_complete_inlineMath_or_not()
 	if cursor_single_dollar >= 0
 		" check whether $ is in \(...\), \[...\], or \begin{eq}...\end{eq}
 
-		" check current line, 
+		" check current line,
 		" search for LatexBox_eq_env_close_patterns: \[ and \(
 		let lnum = line('.')
 		for i in range(0, (len(s:LatexBox_eq_env_open_patterns)-1))
@@ -529,7 +575,7 @@ function! s:LatexBox_complete_inlineMath_or_not()
 				return 1
 			end
 		endfor
-	
+
 		" check the lines above
 		" search for s:LatexBox_doc_structure_patterns, and end-of-math-env
 		let lnum -= 1
@@ -537,15 +583,15 @@ function! s:LatexBox_complete_inlineMath_or_not()
 			let line = getline(lnum)
 			if line =~ notcomment . '\(' . s:LatexBox_doc_structure_patterns .
 						\ '\|' . '\\end\s*{\(' . g:LatexBox_eq_env_patterns . '\)\*\?}\)'
-				" when s:LatexBox_doc_structure_patterns or g:LatexBox_eq_env_patterns 
+				" when s:LatexBox_doc_structure_patterns or g:LatexBox_eq_env_patterns
 				" are found first, complete math, leave with $ at both sides
 				let s:eq_dollar_parenthesis_bracket_empty = '$'
 				let s:eq_pos = cursor_single_dollar
 				break
 			elseif line =~ notcomment . '\\begin\s*{\(' . g:LatexBox_eq_env_patterns . '\)\*\?}'
-				" g:LatexBox_eq_env_patterns is found, complete math, remove $ 
+				" g:LatexBox_eq_env_patterns is found, complete math, remove $
 				let s:eq_dollar_parenthesis_bracket_empty = ''
-				let s:eq_pos = cursor_single_dollar - 1 
+				let s:eq_pos = cursor_single_dollar - 1
 				break
 			endif
 			let lnum -= 1
@@ -560,7 +606,7 @@ function! s:LatexBox_complete_inlineMath_or_not()
 		let cnum_parenthesis_open = matchend(line_start_2_cnum_saved, '\\(', cnum_parenthesis_close)
 		if cnum_parenthesis_open >= 0
 			let s:eq_dollar_parenthesis_bracket_empty = '\)'
-			let s:eq_pos = cnum_parenthesis_open 
+			let s:eq_pos = cnum_parenthesis_open
 			return 1
 		end
 
@@ -581,7 +627,7 @@ function! s:LatexBox_complete_inlineMath_or_not()
 endfunction
 " }}}
 
-" Complete inline euqation{{{ 
+" Complete inline euqation{{{
 function! s:LatexBox_inlineMath_completion(regex, ...)
 
 	if a:0 == 0
@@ -633,7 +679,7 @@ function! s:LatexBox_inlineMath_mathlist(line,inline_pattern, line_num)
 
 			" show line number of inline math
 			let entry = {'word': matches[1], 'menu': '[' . a:line_num . ']'}
-            
+
             if  s:eq_dollar_parenthesis_bracket_empty != ''
                 let entry = copy(entry)
                 let entry.abbr = entry.word
@@ -712,6 +758,70 @@ function! s:PromptEnvWrapSelection(...)
 endfunction
 " }}}
 
+" List Labels with Prompt {{{
+function! s:PromptLabelList(...)
+	" Check if window already exists
+	let winnr = bufwinnr(bufnr('LaTeX Labels'))
+	if winnr >= 0
+		if a:0 == 0
+			silent execute winnr . 'wincmd w'
+		else
+			" Supplying an argument to this function causes toggling instead
+			" of jumping to the labels window
+			if g:LatexBox_split_resize
+				silent exe "set columns-=" . g:LatexBox_split_width
+			endif
+			silent execute 'bwipeout' . bufnr('LaTeX Labels')
+		endif
+		return
+	endif
+
+	" Get label suggestions
+	let regexp = input('filter labels with regexp: ', '')
+	let labels = s:CompleteLabels(regexp)
+
+	let calling_buf = bufnr('%')
+
+	" Create labels window and set local settings
+	if g:LatexBox_split_resize
+		silent exe "set columns+=" . g:LatexBox_split_width
+	endif
+	silent exe g:LatexBox_split_side g:LatexBox_split_width . 'vnew LaTeX\ Labels'
+	let b:toc = []
+	let b:toc_numbers = 1
+	let b:calling_win = bufwinnr(calling_buf)
+	setlocal filetype=latextoc
+
+	" Add label entries and jump to the closest section
+	for entry in labels
+		let number = matchstr(entry['menu'], '^\s*(\zs[^)]\+\ze)')
+		let page = matchstr(entry['menu'], '^[^)]*)\s*\[\zs[^]]\+\ze\]')
+		let e = {'file': bufname(calling_buf),
+					\ 'level': 'label',
+					\ 'number': number,
+					\ 'text': entry['abbr'],
+					\ 'page': page}
+		call add(b:toc, e)
+		if b:toc_numbers
+			call append('$', e['number'] . "\t" . e['text'])
+		else
+			call append('$', e['text'])
+		endif
+	endfor
+	if !g:LatexBox_toc_hidehelp
+		call append('$', "")
+		call append('$', "<Esc>/q: close")
+		call append('$', "<Space>: jump")
+		call append('$', "<Enter>: jump and close")
+		call append('$', "s:       hide numbering")
+	endif
+	0delete _
+
+	" Lock buffer
+	setlocal nomodifiable
+endfunction
+" }}}
+
 " Change Environment {{{
 function! s:ChangeEnvPrompt()
 
@@ -762,6 +872,41 @@ function! s:GetEnvironmentList(lead, cmdline, pos)
 	endfor
 	return suggestions
 endfunction
+
+function! s:LatexToggleStarEnv()
+	let [env, lnum, cnum, lnum2, cnum2] = LatexBox_GetCurrentEnvironment(1)
+
+	if env == '\('
+		return
+	elseif env == '\['
+		let begin = '\begin{equation}'
+		let end = '\end{equation}'
+	elseif env[-1:] == '*'
+		let begin = '\begin{' . env[:-2] . '}'
+		let end   = '\end{'   . env[:-2] . '}'
+	else
+		let begin = '\begin{' . env . '*}'
+		let end   = '\end{'   . env . '*}'
+	endif
+
+	if env == '\['
+		let line = getline(lnum2)
+		let line = strpart(line, 0, cnum2 - 1) . l:end . strpart(line, cnum2 + 1)
+		call setline(lnum2, line)
+
+		let line = getline(lnum)
+		let line = strpart(line, 0, cnum - 1) . l:begin . strpart(line, cnum + 1)
+		call setline(lnum, line)
+	else
+		let line = getline(lnum2)
+		let line = strpart(line, 0, cnum2 - 1) . l:end . strpart(line, cnum2 + len(env) + 5)
+		call setline(lnum2, line)
+
+		let line = getline(lnum)
+		let line = strpart(line, 0, cnum - 1) . l:begin . strpart(line, cnum + len(env) + 7)
+		call setline(lnum, line)
+	endif
+endfunction
 " }}}
 
 " Next Charaters Match {{{
@@ -772,11 +917,16 @@ endfunction
 " }}}
 
 " Mappings {{{
-imap <silent> <Plug>LatexCloseCurEnv			<C-R>=<SID>CloseCurEnv()<CR>
-vmap <silent> <Plug>LatexWrapSelection			:<c-u>call <SID>WrapSelection('')<CR>i
-vmap <silent> <Plug>LatexEnvWrapSelection		:<c-u>call <SID>PromptEnvWrapSelection()<CR>
-vmap <silent> <Plug>LatexEnvWrapFmtSelection	:<c-u>call <SID>PromptEnvWrapSelection(1)<CR>
-nmap <silent> <Plug>LatexChangeEnv				:call <SID>ChangeEnvPrompt()<CR>
+inoremap <silent> <Plug>LatexCloseCurEnv			<C-R>=<SID>CloseCurEnv()<CR>
+vnoremap <silent> <Plug>LatexWrapSelection			:<c-u>call <SID>WrapSelection('')<CR>i
+vnoremap <silent> <Plug>LatexEnvWrapSelection		:<c-u>call <SID>PromptEnvWrapSelection()<CR>
+vnoremap <silent> <Plug>LatexEnvWrapFmtSelection	:<c-u>call <SID>PromptEnvWrapSelection(1)<CR>
+nnoremap <silent> <Plug>LatexChangeEnv				:call <SID>ChangeEnvPrompt()<CR>
+nnoremap <silent> <Plug>LatexToggleStarEnv			:call <SID>LatexToggleStarEnv()<CR>
+" }}}
+
+" Commands {{{
+command! LatexLabels call <SID>PromptLabelList()
 " }}}
 
 " vim:fdm=marker:ff=unix:noet:ts=4:sw=4
